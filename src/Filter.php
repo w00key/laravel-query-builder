@@ -16,43 +16,37 @@ class Filter
     /** @var string */
     protected $property;
 
-    /** @var string */
-    protected $columnName;
-
-    public function __construct(string $property, $filterClass, $columnName = null)
+    public function __construct(string $property, $filterClass)
     {
         $this->property = $property;
-
         $this->filterClass = $filterClass;
-
-        $this->columnName = $columnName ?? $property;
     }
 
     public function filter(Builder $builder, $value)
     {
         $filterClass = $this->resolveFilterClass();
 
-        ($filterClass)($builder, $value, $this->columnName);
+        ($filterClass)($builder, $value, $this->property);
     }
 
-    public static function exact(string $property, $columnName = null) : self
+    public static function exact(string $property) : self
     {
-        return new static($property, FiltersExact::class, $columnName);
+        return new static($property, FiltersExact::class);
     }
 
-    public static function partial(string $property, $columnName = null) : self
+    public static function partial(string $property) : self
     {
-        return new static($property, FiltersPartial::class, $columnName);
+        return new static($property, FiltersPartial::class);
     }
 
-    public static function scope(string $property, $columnName = null) : self
+    public static function scope(string $property) : self
     {
-        return new static($property, FiltersScope::class, $columnName);
+        return new static($property, FiltersScope::class);
     }
 
-    public static function custom(string $property, $filterClass, $columnName = null) : self
+    public static function custom(string $property, $filterClass) : self
     {
-        return new static($property, $filterClass, $columnName);
+        return new static($property, $filterClass);
     }
 
     public function getProperty(): string
@@ -63,11 +57,6 @@ class Filter
     public function isForProperty(string $property): bool
     {
         return $this->property === $property;
-    }
-
-    public function getcolumnName(): string
-    {
-        return $this->columnName;
     }
 
     private function resolveFilterClass(): CustomFilter

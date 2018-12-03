@@ -152,15 +152,11 @@ class QueryBuilder extends Builder
             return $this;
         }
 
-        $this->allowedSorts = collect($sorts)->map(function ($sort) {
-            if ($sort instanceof Sort) {
-                return $sort;
-            }
+        $this->allowedSorts = collect($sorts);
 
-            return Sort::field(ltrim($sort, '-'));
-        });
-
-        $this->guardAgainstUnknownSorts();
+        if (! $this->allowedSorts->contains('*')) {
+            $this->guardAgainstUnknownSorts();
+        }
 
         $this->addSortsToQuery($this->request->sorts($this->defaultSort));
 
@@ -249,14 +245,12 @@ class QueryBuilder extends Builder
     protected function addSortsToQuery(Collection $sorts)
     {
         $this->filterDuplicates($sorts)
-            ->each(function (string $property) {
-                $descending = $property[0] === '-';
+            ->each(function (string $sort) {
+                $descending = $sort[0] === '-';
 
-                $key = ltrim($property, '-');
+                $key = ltrim($sort, '-');
 
-                $sort = $this->findSort($key);
-
-                $sort->sort($this, $descending);
+                $this->orderBy($key, $descending ? 'desc' : 'asc');
             });
     }
 
@@ -277,27 +271,6 @@ class QueryBuilder extends Builder
                 }
             }
         });
-    }
-
-    protected function findSort(string $property) : ? Sort
-    {
-        return $this->allowedSorts
-            ->first(function (Sort $sort) use ($property) {
-                return $sort->isForProperty($property);
-            });
-    }
-
-    protected function addDefaultSorts()
-    {
-        $this->allowedSorts = collect($this->request->sorts($this->defaultSort))->map(function ($sort) {
-            if ($sort instanceof Sort) {
-                return $sort;
-            }
-
-            return Sort::field(ltrim($sort, '-'));
-        });
-
-        $this->addSortsToQuery($this->request->sorts($this->defaultSort));
     }
 
     protected function addIncludesToQuery(Collection $includes)
@@ -374,16 +347,14 @@ class QueryBuilder extends Builder
 
     protected function guardAgainstUnknownSorts()
     {
-        $sortNames = $this->request->sorts()->map(function ($sort) {
+        $sorts = $this->request->sorts()->map(function ($sort) {
             return ltrim($sort, '-');
         });
 
-        $allowedSortNames = $this->allowedSorts->map->getProperty();
-
-        $diff = $sortNames->diff($allowedSortNames);
+        $diff = $sorts->diff($this->allowedSorts);
 
         if ($diff->count()) {
-            throw InvalidSortQuery::sortsNotAllowed($diff, $allowedSortNames);
+            throw InvalidSortQuery::sortsNotAllowed($diff, $this->allowedSorts);
         }
     }
 
@@ -409,21 +380,8 @@ class QueryBuilder extends Builder
         }
     }
 
-    public function getQuery()
-    {
-        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
-            $this->addDefaultSorts();
-        }
-
-        return parent::getQuery();
-    }
-
     public function get($columns = ['*'])
     {
-        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
-            $this->addDefaultSorts();
-        }
-
         $result = parent::get($columns);
 
         if (count($this->appends) > 0) {
@@ -431,23 +389,5 @@ class QueryBuilder extends Builder
         }
 
         return $result;
-    }
-
-    public function paginate($perPage = null, $columns = ['*'], $pageName = 'page', $page = null)
-    {
-        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
-            $this->addDefaultSorts();
-        }
-
-        return parent::paginate($perPage, $columns, $pageName, $page);
-    }
-
-    public function simplePaginate($perPage = null, $columns = ['*'], $pageName = 'page', $page = null)
-    {
-        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
-            $this->addDefaultSorts();
-        }
-
-        return parent::simplePaginate($perPage, $columns, $pageName, $page);
     }
 }
