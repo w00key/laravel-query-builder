@@ -6,7 +6,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Database\Eloquent\Builder;
 use Spatie\QueryBuilder\Exceptions\InvalidSortQuery;
-use Spatie\QueryBuilder\Exceptions\InvalidFieldQuery;
 use Spatie\QueryBuilder\Exceptions\InvalidAppendQuery;
 use Spatie\QueryBuilder\Exceptions\InvalidFilterQuery;
 use Spatie\QueryBuilder\Exceptions\InvalidIncludeQuery;
@@ -15,9 +14,6 @@ class QueryBuilder extends Builder
 {
     /** @var \Illuminate\Support\Collection */
     protected $allowedFilters;
-
-    /** @var \Illuminate\Support\Collection */
-    protected $allowedFields;
 
     /** @var string|null */
     protected $defaultSort;
@@ -48,13 +44,7 @@ class QueryBuilder extends Builder
 
         $this->request = $request ?? request();
 
-        if ($this->request->fields()->isNotEmpty()) {
-            $this->parseSelectedFields();
-        }
-
-        if ($this->request->sorts()->isNotEmpty()) {
-            $this->allowedSorts('*');
-        }
+        $this->parseSelectedFields();
     }
 
     /**
@@ -114,28 +104,6 @@ class QueryBuilder extends Builder
         return $this;
     }
 
-    public function allowedFields($fields) : self
-    {
-        $fields = is_array($fields) ? $fields : func_get_args();
-
-        $this->allowedFields = collect($fields)
-            ->map(function (string $fieldName) {
-                if (! str_contains($fieldName, '.')) {
-                    $modelTableName = $this->getModel()->getTable();
-
-                    return "{$modelTableName}.{$fieldName}";
-                }
-
-                return $fieldName;
-            });
-
-        if (! $this->allowedFields->contains('*')) {
-            $this->guardAgainstUnknownFields();
-        }
-
-        return $this;
-    }
-
     public function defaultSort($sort) : self
     {
         $this->defaultSort = $sort;
@@ -152,11 +120,15 @@ class QueryBuilder extends Builder
             return $this;
         }
 
-        $this->allowedSorts = collect($sorts);
+        $this->allowedSorts = collect($sorts)->map(function ($sort) {
+            if ($sort instanceof Sort) {
+                return $sort;
+            }
 
-        if (! $this->allowedSorts->contains('*')) {
-            $this->guardAgainstUnknownSorts();
-        }
+            return Sort::field(ltrim($sort, '-'));
+        });
+
+        $this->guardAgainstUnknownSorts();
 
         $this->addSortsToQuery($this->request->sorts($this->defaultSort));
 
@@ -204,9 +176,13 @@ class QueryBuilder extends Builder
         $this->fields = $this->request->fields();
 
         $modelTableName = $this->getModel()->getTable();
-        $modelFields = $this->fields->get($modelTableName, ['*']);
+        $modelFields = $this->fields->get($modelTableName);
 
-        $this->select($this->prependFieldsWithTableName($modelFields, $modelTableName));
+        if (! $modelFields) {
+            $modelFields = '*';
+        }
+
+        $this->select($this->prependFieldsWithTableName(explode(',', $modelFields), $modelTableName));
     }
 
     protected function prependFieldsWithTableName(array $fields, string $tableName): array
@@ -218,11 +194,13 @@ class QueryBuilder extends Builder
 
     protected function getFieldsForRelatedTable(string $relation): array
     {
-        if (! $this->fields) {
-            return ['*'];
+        $fields = $this->fields->get($relation);
+
+        if (! $fields) {
+            return [];
         }
 
-        return $this->fields->get($relation, []);
+        return explode(',', $fields);
     }
 
     protected function addFiltersToQuery(Collection $filters)
@@ -245,12 +223,14 @@ class QueryBuilder extends Builder
     protected function addSortsToQuery(Collection $sorts)
     {
         $this->filterDuplicates($sorts)
-            ->each(function (string $sort) {
-                $descending = $sort[0] === '-';
+            ->each(function (string $property) {
+                $descending = $property[0] === '-';
 
-                $key = ltrim($sort, '-');
+                $key = ltrim($property, '-');
 
-                $this->orderBy($key, $descending ? 'desc' : 'asc');
+                $sort = $this->findSort($key);
+
+                $sort->sort($this, $descending);
             });
     }
 
@@ -273,6 +253,27 @@ class QueryBuilder extends Builder
         });
     }
 
+    protected function findSort(string $property) : ? Sort
+    {
+        return $this->allowedSorts
+            ->first(function (Sort $sort) use ($property) {
+                return $sort->isForProperty($property);
+            });
+    }
+
+    protected function addDefaultSorts()
+    {
+        $this->allowedSorts = collect($this->request->sorts($this->defaultSort))->map(function ($sort) {
+            if ($sort instanceof Sort) {
+                return $sort;
+            }
+
+            return Sort::field(ltrim($sort, '-'));
+        });
+
+        $this->addSortsToQuery($this->request->sorts($this->defaultSort));
+    }
+
     protected function addIncludesToQuery(Collection $includes)
     {
         $includes
@@ -292,7 +293,7 @@ class QueryBuilder extends Builder
                         }
 
                         return [$fullRelationName => function ($query) use ($fields) {
-                            $query->select($this->prependFieldsWithTableName($fields, $query->getModel()->getTable()));
+                            $query->select($fields);
                         }];
                     });
             })
@@ -325,36 +326,18 @@ class QueryBuilder extends Builder
         }
     }
 
-    protected function guardAgainstUnknownFields()
-    {
-        $fields = $this->request->fields()
-            ->map(function ($fields, $model) {
-                $tableName = snake_case(preg_replace('/-/', '_', $model));
-
-                $fields = array_map('snake_case', $fields);
-
-                return $this->prependFieldsWithTableName($fields, $tableName);
-            })
-            ->flatten()
-            ->unique();
-
-        $diff = $fields->diff($this->allowedFields);
-
-        if ($diff->count()) {
-            throw InvalidFieldQuery::fieldsNotAllowed($diff, $this->allowedFields);
-        }
-    }
-
     protected function guardAgainstUnknownSorts()
     {
-        $sorts = $this->request->sorts()->map(function ($sort) {
+        $sortNames = $this->request->sorts()->map(function ($sort) {
             return ltrim($sort, '-');
         });
 
-        $diff = $sorts->diff($this->allowedSorts);
+        $allowedSortNames = $this->allowedSorts->map->getProperty();
+
+        $diff = $sortNames->diff($allowedSortNames);
 
         if ($diff->count()) {
-            throw InvalidSortQuery::sortsNotAllowed($diff, $this->allowedSorts);
+            throw InvalidSortQuery::sortsNotAllowed($diff, $allowedSortNames);
         }
     }
 
@@ -380,8 +363,21 @@ class QueryBuilder extends Builder
         }
     }
 
+    public function getQuery()
+    {
+        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
+            $this->addDefaultSorts();
+        }
+
+        return parent::getQuery();
+    }
+
     public function get($columns = ['*'])
     {
+        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
+            $this->addDefaultSorts();
+        }
+
         $result = parent::get($columns);
 
         if (count($this->appends) > 0) {
@@ -389,5 +385,23 @@ class QueryBuilder extends Builder
         }
 
         return $result;
+    }
+
+    public function paginate($perPage = null, $columns = ['*'], $pageName = 'page', $page = null)
+    {
+        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
+            $this->addDefaultSorts();
+        }
+
+        return parent::paginate($perPage, $columns, $pageName, $page);
+    }
+
+    public function simplePaginate($perPage = null, $columns = ['*'], $pageName = 'page', $page = null)
+    {
+        if ($this->request->sorts() && ! $this->allowedSorts instanceof Collection) {
+            $this->addDefaultSorts();
+        }
+
+        return parent::simplePaginate($perPage, $columns, $pageName, $page);
     }
 }

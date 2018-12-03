@@ -52,17 +52,21 @@ class QueryBuilderServiceProvider extends ServiceProvider
         });
 
         Request::macro('filters', function ($filter = null) {
-            $filterParts = $this->query(config('query-builder.parameters.filter'), []);
+            $filterParts = $this->query(
+                config('query-builder.parameters.filter')
+            );
 
-            if (is_string($filterParts)) {
+            if (! $filterParts) {
                 return collect();
             }
 
-            $filters = collect($filterParts);
+            $filters = collect($filterParts)->filter(function ($filter) {
+                return ! is_null($filter);
+            });
 
             $filtersMapper = function ($value) {
                 if (is_array($value)) {
-                    return collect($value)->map($this->bindTo($this))->all();
+                    return collect($value)->map($this)->all();
                 }
 
                 if (str_contains($value, ',')) {
@@ -89,22 +93,12 @@ class QueryBuilderServiceProvider extends ServiceProvider
             return $filters->get(strtolower($filter));
         });
 
-        Request::macro('fields', function () {
-            $fieldsPerTable = collect(
-                $this->query(config('query-builder.parameters.fields'))
-            );
-
-            if ($fieldsPerTable->isEmpty()) {
-                return collect();
-            }
-
-            return $fieldsPerTable->map(function ($fields) {
-                return explode(',', $fields);
-            });
-        });
-
         Request::macro('sort', function ($default = null) {
             return $this->query(config('query-builder.parameters.sort'), $default);
+        });
+
+        Request::macro('fields', function ($default = null) {
+            return collect($this->query(config('query-builder.parameters.fields'), $default));
         });
 
         Request::macro('sorts', function ($default = null) {

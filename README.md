@@ -214,7 +214,7 @@ Consider the following scope on your model:
 ```php
 public function scopeStartsBefore(Builder $query, $date): Builder
 {
-    return $query->where('starts_at', '<=', Carbon::parse($date));
+    return $query->where('starts_at', '>=', Carbon::parse($date));
 }
 ```
 
@@ -339,18 +339,6 @@ The SQL query will look like this:
 
 ```sql
 SELECT "id", "name" FROM "users"
-```
-
-Using the `allowedFields` method you can limit which fields (columns) are allowed to be queried in the request.
-
-When trying to select a column that's not specified in `allowedFields()` an `InvalidFieldQuery` exception will be thrown.
-
-``` php
-$users = QueryBuilder::for(User::class)
-    ->allowedFields('name')
-    ->get();
-
-// GET /users?fields[users]=email will throw an `InvalidFieldQuery` exception as `email` is not an allowed field.
 ```
 
 Selecting fields for included models works the same way. This is especially useful when including entire relationships when you only need a couple of columns. Consider the following example:
